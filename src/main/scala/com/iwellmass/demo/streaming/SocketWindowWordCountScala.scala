@@ -1,10 +1,12 @@
 package com.iwellmass.demo.streaming
 
 
+import org.apache.flink.api.java.functions.KeySelector
 import org.apache.flink.api.java.utils.ParameterTool
 import org.apache.flink.streaming.api.scala.StreamExecutionEnvironment
 import org.apache.flink.streaming.api.windowing.time.Time
 import org.apache.flink.api.scala._
+import org.apache.flink.streaming.api.TimeCharacteristic
 
 /**
   * 滑动窗口计算
@@ -17,9 +19,13 @@ object SocketWindowWordCountScala {
 
   def main(args: Array[String]): Unit = {
 
+
+    val params: ParameterTool = ParameterTool.fromArgs(args)
+
+
     //获取socket端口号
     val port: Int = try {
-      ParameterTool.fromArgs(args).getInt("port")
+      params.getInt("port")
     }catch {
       case e: Exception => {
         System.err.println("No port set. use default port 9000--scala")
@@ -31,15 +37,29 @@ object SocketWindowWordCountScala {
     //获取环境变量
     val env = StreamExecutionEnvironment.getExecutionEnvironment
 
+    // 设置全局参数
+    env.getConfig.setGlobalJobParameters(params)
+
+    //env.setParallelism(4)
+    // 只能设置某些并行度 有些算子不支持修改并行度
+
+    // 设置时间语义
+    env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime)
+
+
     //链接socket获取输入数据
     val text = env.socketTextStream("172.16.10.151",port,'\n')
 
     //解析数据(把数据打平)，分组，窗口计算，并且聚合求sum
     val windowCounts = text.flatMap(line => line.split("\\s"))//打平，把每一行单词都切开
       .map(w => WordWithCount(w,1))//把单词转成word , 1这种形式
-      .keyBy("word")//分组
+      //.keyBy("word")//分组
+      .keyBy(
+        new KeySelector[WordWithCount,String] {
+          override def getKey(in: WordWithCount): String = in.word
+        })
       .timeWindow(Time.seconds(2),Time.seconds(1))//指定窗口大小，指定间隔时间
-      .sum("count");// sum或者reduce都可以
+      .sum("count")// sum或者reduce都可以
     //.reduce((a,b)=>WordWithCount(a.word,a.count+b.count))
 
     //打印到控制台
